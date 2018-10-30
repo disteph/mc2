@@ -10,6 +10,7 @@ val conv_bool_term : Service.Registry.t -> Ast.term -> atom list list
 (** Convert a boolean term into CNF *)
 
 val process_stmt :
+  ?dec_heur:string ->
   ?gc:bool ->
   ?restarts:bool ->
   ?pp_cnf:bool ->

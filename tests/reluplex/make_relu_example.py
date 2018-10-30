@@ -49,17 +49,6 @@ def nn_to_smt2(clf, input_bounds=None, output_bounds=None):
                 ans += '(assert (> n_0_%s %s))\n' % (i, ll)
             if uu is not None:
                 ans += '(assert (< n_0_%s %s))\n' % (i, uu)
-    if output_bounds is not None:
-        ans += '\n;; Goal\n\n'
-        for i, (l, u, ll, uu) in enumerate(output_bounds):
-            if l is not None:
-                ans += '(assert (>= n_%s_%s %s))\n' % (n - 1, i, l)
-            if u is not None:
-                ans += '(assert (<= n_%s_%s %s))\n' % (n - 1, i, u)
-            if ll is not None:
-                ans += '(assert (> n_%s_%s %s))\n' % (n - 1, i, ll)
-            if uu is not None:
-                ans += '(assert (< n_%s_%s %s))\n' % (n - 1, i, uu)
     ans += '\n;; Declare the transition rules between neurons\n\n'
     for i in range(1, n):
         ans += ';; Layer %s\n' % i
@@ -78,6 +67,17 @@ def nn_to_smt2(clf, input_bounds=None, output_bounds=None):
                 form = '(assert (let ((ws %s)) (= n_%s_%s ws)))' % (
                     expr, i, j)
             ans += form + '\n'
+    if output_bounds is not None:
+        ans += '\n;; Goal\n\n'
+        for i, (l, u, ll, uu) in enumerate(output_bounds):
+            if l is not None:
+                ans += '(assert (>= n_%s_%s %s))\n' % (n - 1, i, l)
+            if u is not None:
+                ans += '(assert (<= n_%s_%s %s))\n' % (n - 1, i, u)
+            if ll is not None:
+                ans += '(assert (> n_%s_%s %s))\n' % (n - 1, i, ll)
+            if uu is not None:
+                ans += '(assert (< n_%s_%s %s))\n' % (n - 1, i, uu)
     ans += '\n(check-sat)\n'
     return ans
 

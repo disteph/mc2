@@ -9,5 +9,6 @@ _build/
 src/util/log.ml
 doc/index.html
 .merlin
+*~
 
 snapshots

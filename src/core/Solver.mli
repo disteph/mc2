@@ -125,6 +125,7 @@ type res =
 (** Result type for the solver *)
 
 val solve :
+  ?dec_heur:string ->
   ?gc:bool ->
   ?restarts:bool ->
   ?time:float ->

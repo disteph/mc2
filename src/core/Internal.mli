@@ -57,6 +57,7 @@ val iter_terms : t -> term Sequence.t
     Used for checking all variables to assign, and for garbage collection. *)
 
 val solve :
+  ?dec_heur:string ->
   ?gc:bool ->
   ?restarts:bool ->
   ?time:float ->

@@ -24,6 +24,7 @@ let time_limit = ref 300.
 let size_limit = ref 1000_000_000.
 let restarts = ref true
 let gc = ref true
+let dec_heur = ref ""
 let p_stat = ref false
 let p_gc_stat = ref false
 let p_progress = ref false
@@ -93,6 +94,7 @@ let argspec = Arg.align [
     "-time", Arg.String (int_arg time_limit), " <t>[smhd] sets the time limit for the sat solver";
     "-v", Arg.Int Log.set_debug, "<lvl> sets the debug verbose level";
     "-lra-alt", Arg.Int Mc2_lra.set_lra_alt, "<int> activates variants of eq analysis in LRA";
+    "-dec_heur", Arg.Set_string dec_heur, " <string> sets the decision heuristic (BoolArith, ArithBool, AsItComes (default))";
   ]
 
 type syntax =
@@ -139,6 +141,7 @@ let main () =
           E.fold_l
             (fun () ->
                Process_smtlib.process_stmt
+                 ~dec_heur:!dec_heur
                  ~gc:!gc ~restarts:!restarts ~pp_cnf:!p_cnf
                  ~time:!time_limit ~memory:!size_limit
                  ?dot_proof ~pp_model:!p_model ~check:!check ~progress:!p_progress

@@ -33,9 +33,49 @@ module H = Heap.Make(struct
     type t = term
     let[@inline] idx t = t.t_idx
     let[@inline] set_idx t i = t.t_idx <- i
-    let[@inline] cmp i j = Term.weight j < Term.weight i (* comparison by weight *)
+    let[@inline] cmp i j = Order_heuristics.cmp i j < 0
     let dummy = dummy_term
   end)
+
+(* module H : sig
+ *   type elt = Mc2_core__.Solver_types.term
+ *   type t
+ *   val create : unit -> t
+ *   val decrease : t -> elt -> unit
+ *   val in_heap : elt -> bool
+ *   (\* val size : t -> int *\)
+ *   val is_empty : t -> bool
+ *   (\* val clear : t -> unit *\)
+ *   val insert : t -> elt -> unit
+ *   (\* val grow_to_at_least : t -> int -> unit *\)
+ *   val remove_min : t -> elt
+ * end
+ * = struct
+ * 
+ *   module M = Set.Make(struct
+ *       type t = term
+ *       let[@inline] compare i j = Order_heuristics.cmp i j
+ *     end)
+ * 
+ *   type elt = Mc2_core__.Solver_types.term
+ *   type t = M.t ref 
+ * 
+ *   let[@inline] create () =
+ *     Log.debugf 1 (fun k->k "Creating empty heap");
+ *     ref M.empty
+ *   let[@inline] decrease _ _ = ()
+ *   let[@inline] in_heap _ = false
+ *   let[@inline] is_empty h = M.is_empty !h
+ *   let[@inline] insert h e = h := M.add e !h
+ *     (\* Log.debugf 1 (fun k->k "Heap after insert is %a" (CCList.pp Term.pp) (M.elements u)) *\)
+ * 
+ *   let[@inline] remove_min h = let res = M.min_elt !h in h := M.remove res !h;
+ *     (\* Log.debugf 1 (fun k->k "Heap after remove is %a" (CCList.pp Term.pp) (M.elements !h)); *\)
+ *     res
+ * 
+ * end *)
+
+
 
 (* full state of the solver *)
 type t = {
@@ -144,6 +184,8 @@ type t = {
   mutable starts : int; (* number of (re)starts *)
   mutable decisions : int; (* number of decisions *)
   mutable bool_decisions : int; (* number of boolean decisions *)
+  mutable sem_decisions : int;  (* number of semantic decisions *)
+  mutable sem_splits : int; (* number of semantic splits *)
   mutable propagations : int; (* number of propagations *)
   mutable conflicts : int; (* number of conflicts *)
   mutable n_learnt : int; (* total number of clauses learnt *)
@@ -246,7 +288,7 @@ let[@unrolled 1] rec add_term (env:t) (t:term): unit =
   ) else if Term.is_added t then (
     assert (Term.has_var t);
   ) else (
-    Log.debugf 15 (fun k->k"(@[solver.add_term %a@])" Term.debug t);
+    (* Log.debugf 1 (fun k->k"(@[solver.add_term %a@])" Term.debug t); *)
     Term.field_set field_t_is_added t;
     Term.setup_var t;
     Term.iter_subterms t (add_term env); (* add subterms, recursively *)
@@ -257,6 +299,7 @@ let[@unrolled 1] rec add_term (env:t) (t:term): unit =
       | Eval_into (value, l) when List.for_all (fun t -> Term.level t=0) l ->
         t.t_assign <- TA_assign {value;reason=Eval l;level=0};
       | _ ->
+        (* Log.debugf 1 (fun k->k"(@[solver.add_term (really) %a@])" Term.debug t); *)
         H.insert env.term_heap t; (* add to priority queue for decision *)
     end;
     term_init env t; (* setup watches, possibly propagating already *)
@@ -266,6 +309,7 @@ let[@inline] add_atom (env:t) (a:atom) : unit = add_term env (Atom.term a)
 
 (* put [t] in the heap of terms to decide *)
 let[@inline] schedule_decision_term (env:t) (t:term): unit =
+  (* Log.debugf 1 (fun k->k"(@[solver.schedule_decision_term %a@])" Term.debug t); *)
   H.insert env.term_heap t
 
 (* Rather than iterate over all the heap when we want to decrease all the
@@ -367,6 +411,8 @@ let create_real (actions:actions lazy_t) : t = {
   starts = 0;
   decisions = 0;
   bool_decisions = 0;
+  sem_decisions = 0;
+  sem_splits = 0;
   propagations = 0;
   conflicts = 0;
   n_learnt=0;
@@ -971,7 +1017,7 @@ end = struct
       cs_conflict_level=conflict_level;
     } in
     Vec.clear (seen env);
-    Log.debugf 15
+    Log.debugf 1
       (fun k -> k "(@[analyze_conflict (%d/%d)@ :conflict %a@])"
           conflict_level (decision_level env) Clause.debug c);
     assert (conflict_level >= 0);
@@ -981,9 +1027,9 @@ end = struct
     (* put high level atoms first *)
     let learnt_a = Array.of_list st.cs_learnt in
     put_high_level_atoms_first learnt_a;
-    Log.debugf debug
-      (fun k -> k "(@[analyze_conflict.learnt@ %a@])" Clause.debug_atoms_a learnt_a);
     let level, is_uip = backtrack_lvl env learnt_a in
+    Log.debugf 1
+      (fun k -> k "(@[analyze_conflict.learnt@ %a, backtrack level %i, %s@])" Clause.debug_atoms_a learnt_a level (if is_uip then "UIP" else "SemSplit"));
     {Conflict_res.
       cr_backtrack_lvl = level;
       cr_learnt = learnt_a;
@@ -1035,6 +1081,7 @@ let record_learnt_clause (env:t) (cr:Conflict_res.t): unit =
         enqueue_bool env fuip ~level:cr.cr_backtrack_lvl (Bcp lclause)
       ) else (
         (* semantic split: pick negation of one of top-level lits *)
+        env.sem_splits <- env.sem_splits+1;
         env.next_decision <- Some (Atom.neg fuip)
       )
   end;
@@ -1048,6 +1095,8 @@ let record_learnt_clause (env:t) (cr:Conflict_res.t): unit =
 *)
 let add_conflict (env:t) (confl:clause): unit =
   Log.debugf info (fun k -> k"@{<Yellow>## add_conflict@}: %a" Clause.debug confl);
+  Log.debugf 1
+    (fun k->k"(@[solver trail b4 conflict %a@])" (Vec.print ~sep:"" Term.debug) env.trail);
   env.next_decision <- None;
   env.conflicts <- env.conflicts + 1;
   assert (decision_level env >= base_level env);
@@ -1421,7 +1470,7 @@ let rec pick_branch_aux (env:t) (atom:atom) : unit =
         env.decisions <- env.decisions + 1;
         env.bool_decisions <- env.bool_decisions + 1;
         new_decision_level env;
-        Log.debugf debug (fun k->k "(@[solver.bool_decide@ %a@])" Atom.debug atom);
+        Log.debugf 1 (fun k->k "(@[solver.bool_decide@ %a@])" Atom.debug atom);
         let current_level = decision_level env in
         enqueue_bool env atom ~level:current_level Decision
       | Eval_into (b, l) ->
@@ -1449,6 +1498,7 @@ and pick_branch_lit (env:t) : unit =
       ) else (
         (* pick some term *)
         let t = H.remove_min env.term_heap in
+        (* Log.debugf 1 (fun k->k "(@[heap_pop@ %a@])" Term.debug t);  *)
         if Term.is_deleted t then pick_branch_lit env (* try next *)
         else begin match t.t_var with
           | Var_none ->  assert false
@@ -1461,9 +1511,11 @@ and pick_branch_lit (env:t) : unit =
               pick_branch_lit env (* assigned already *)
             ) else (
               let value = decide_term env t in
+              env.sem_decisions <- env.sem_decisions + 1;
               env.decisions <- env.decisions + 1;
               new_decision_level env;
               let current_level = decision_level env in
+              Log.debugf 1 (fun k->k "(@[sem_decision@ %a@])" Term.debug t); 
               enqueue_assign env t value Decision ~level:current_level
             )
         end
@@ -1698,6 +1750,7 @@ let final_check (env:t) : final_check_res =
 (* fixpoint of propagation and decisions until a model is found, or a
    conflict is reached *)
 let solve
+    ?(dec_heur="")
     ?(gc=true)
     ?(restarts=true)
     ?(time=max_float)
@@ -1705,6 +1758,7 @@ let solve
     ?(progress=false)
     (env:t)
   : unit =
+  Order_heuristics.init dec_heur;
   Log.debugf 2 (fun k->k"@{<Green>#### Solve@}");
   if is_unsat env then (
     raise Unsat;
@@ -1887,11 +1941,11 @@ let trail env = env.trail
 let pp_stats out (s:t): unit =
   Fmt.fprintf out
     "(@[stats@ :n_conflicts %d@ \
-     :n_decisions %d@ :n_bool_decisions %d@ :n_propagations %d@ :n_restarts %d@ \
+     :n_decisions %d@ :n_bool_decisions %d@ :n_sem_decisions %d@ :n_sem_splits %d@ :n_propagations %d@ :n_restarts %d@ \
      :n_learnt %d@ :n_initial %d@ \
      @[:gc_c %d@ :deleted_c %d@]@ \
      @[:gc_t %d :deleted_t %d@]@])"
-    s.conflicts s.decisions s.bool_decisions s.propagations s.starts s.n_learnt
+    s.conflicts s.decisions s.bool_decisions s.sem_decisions s.sem_splits s.propagations s.starts s.n_learnt
     (Vec.size s.clauses_hyps) s.n_gc_c s.n_deleted_c s.n_gc_t s.n_deleted_t
 
 let[@inline] clear_progress () = print_string "\r\027[K";

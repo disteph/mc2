@@ -451,6 +451,7 @@ module[@inline] Term_allocator(Ops : TERM_ALLOC_OPS) : TERM_ALLOC = struct
     try H.find tbl view
     with Not_found ->
       let t = make_term_ view ty in
+      Log.debugf 30 (fun k->k "(@[Make term %a@])" debug t);
       H.add tbl view t;
       t
 
